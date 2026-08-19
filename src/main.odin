@@ -38,4 +38,3 @@ main :: proc() {
 	client_addr_len := posix.socklen_t(size_of(posix.sockaddr_storage))
 	posix.accept(sock, cast(^posix.sockaddr)(&client_addr), &client_addr_len)
 }
-
