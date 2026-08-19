@@ -1,6 +1,7 @@
 package main
 
 import "core:fmt"
+import "core:strings"
 import "core:sys/posix"
 
 main :: proc() {
@@ -42,9 +43,40 @@ main :: proc() {
 		fmt.eprintln("failed to accept a client connection")
 	}
 
-	response := transmute([]byte)string("HTTP/1.1 200 OK\r\n\r\n")
-	bytes_sent := posix.write(client_socket, raw_data(response), len(response))
+	read_buf := [1024]byte{}
+	read_bytes := posix.read(client_socket, raw_data(read_buf[:]), len(read_buf))
+	if read_bytes < 0 {
+		fmt.eprintln("couldn't read data from client socket")
+		return
+	}
+
+	all_parts := strings.split(string(read_buf[:read_bytes]), "\r\n")
+	if len(all_parts) < 2 {
+		fmt.eprintln("got too small CRLF parts in request")
+		return
+	}
+
+	request_line := strings.split(all_parts[0], " ")
+	if len(request_line) != 3 {
+		fmt.eprintln("requets line is expected to have 3 parts. Method, url, http version")
+		return
+	}
+
+	method, route, http_version := request_line[0], request_line[1], request_line[2]
+	fmt.println("got request", method, route, http_version)
+
+
+	response: string
+	if route == "/" {
+		response = "HTTP/1.1 200 OK\r\n\r\n"
+	} else {
+		response = "HTTP/1.1 Not Found\r\n\r\n"
+	}
+
+	response_as_bytes := transmute([]byte)response
+	bytes_sent := posix.write(client_socket, raw_data(response_as_bytes), len(response_as_bytes))
 	if bytes_sent < 1 {
-		fmt.eprintln("couldn't send bytes to client socket")
+		fmt.eprintln("could not send response to client socket")
+		return
 	}
 }
