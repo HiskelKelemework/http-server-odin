@@ -36,5 +36,15 @@ main :: proc() {
 	// TODO: Uncomment the code below to pass the first stage
 	client_addr: posix.sockaddr_storage
 	client_addr_len := posix.socklen_t(size_of(posix.sockaddr_storage))
-	posix.accept(sock, cast(^posix.sockaddr)(&client_addr), &client_addr_len)
+
+	client_socket := posix.accept(sock, cast(^posix.sockaddr)(&client_addr), &client_addr_len)
+	if client_socket < 0 {
+		fmt.eprintln("failed to accept a client connection")
+	}
+
+	response := transmute([]byte)string("HTTP/1.1 200 OK\r\n\r\n")
+	bytes_sent := posix.write(client_socket, raw_data(response), len(response))
+	if bytes_sent < 1 {
+		fmt.eprintln("couldn't send bytes to client socket")
+	}
 }
