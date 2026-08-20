@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 import "core:sys/posix"
+import "core:thread"
 
 HttpHeader :: struct {
 	key, value: string,
@@ -51,103 +52,10 @@ main :: proc() {
 			fmt.eprintln("failed to accept a client connection")
 		}
 
-		defer posix.close(client_socket)
+		socket_fd := new(posix.FD)
+		socket_fd^ = client_socket
 
-		fmt.println("accepted socket")
-		// here, we need to read the request line
-		reader: Buffered_Reader
-		buffered_reader_init(&reader, client_socket)
-		defer buffered_reader_destroy(reader)
-
-		line, ok := buffered_reader_read_line(&reader)
-		if !ok {
-			fmt.eprintln("could not read a full line from buffer")
-			continue
-		}
-
-		request_line := string(line)
-		parts, split_error := strings.split(request_line, " ")
-		if split_error != nil {
-			fmt.eprintln("error during request line split", split_error)
-			continue
-		}
-
-		if len(parts) != 3 {
-			fmt.eprintln("request parts must have exactly three parts")
-			continue
-		}
-
-		method, path, http_version := parts[0], parts[1], parts[2]
-		fmt.println("route: ", path)
-
-		headers := [dynamic]HttpHeader{}
-		header_loop: for {
-			header, ok := buffered_reader_read_line(&reader)
-			if !ok {
-				fmt.eprintln("error reading header line")
-				continue outer_loop
-			}
-
-			header_string := string(header)
-			if header_string == "" do break
-
-			header_parts, error := strings.split(header_string, ": ")
-			if error != nil {
-				fmt.eprintln("error splitting header", error)
-				continue outer_loop
-			}
-
-			if len(header_parts) != 2 {
-				fmt.eprintln("expected 2 parts to header but found", len(header_parts))
-				continue outer_loop
-			}
-
-			append_elem(&headers, HttpHeader{key = header_parts[0], value = header_parts[1]})
-		}
-
-		response: string
-
-		if path == "/" {
-			// return 200 ok
-			response = "HTTP/1.1 200 OK\r\n\r\n"
-		} else if strings.starts_with(path, "/echo/") {
-			// echo route handler
-			echo_parts, error := strings.split(path, "/echo/")
-			if error != nil {
-				fmt.eprintln("error during request line split", split_error)
-				continue
-			}
-
-			string_to_echo := echo_parts[1]
-
-			response = fmt.tprintf(
-				"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
-				len(string_to_echo),
-				string_to_echo,
-			)
-		} else if path == "/user-agent" {
-			// whatever we get in the user agent header, we return
-			index, found := slice.linear_search_proc(headers[:], proc(header: HttpHeader) -> bool {
-					return strings.to_lower(header.key) == "user-agent"
-				})
-
-			if !found {
-				response = "HTTP/1.1 404 Not Found\r\n\r\n"
-			} else {
-				header := headers[index]
-
-				response = fmt.tprintf(
-					"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
-					len(header.value),
-					header.value,
-				)
-			}
-		} else {
-			// return 404 not found
-			response = "HTTP/1.1 404 Not Found\r\n\r\n"
-		}
-
-		posix.write(client_socket, raw_data(transmute([]byte)response), len(response))
+		thread.create_and_start_with_data(socket_fd, request_handler, nil, .Normal, true)
 	}
 }
 
@@ -207,4 +115,107 @@ buffered_reader_read_line :: proc(reader: ^Buffered_Reader) -> (data: []byte, ok
 	reader.head = new_head + len(CRLF)
 
 	return slice_to_return, true
+}
+
+request_handler :: proc(data: rawptr) {
+	socket_fc := (^posix.FD)(data)
+	client_socket := socket_fc^
+
+	defer posix.close(client_socket)
+
+	fmt.println("accepted socket")
+	// here, we need to read the request line
+	reader: Buffered_Reader
+	buffered_reader_init(&reader, client_socket)
+	defer buffered_reader_destroy(reader)
+
+	line, ok := buffered_reader_read_line(&reader)
+	if !ok {
+		fmt.eprintln("could not read a full line from buffer")
+		return
+	}
+
+	request_line := string(line)
+	parts, split_error := strings.split(request_line, " ")
+	if split_error != nil {
+		fmt.eprintln("error during request line split", split_error)
+		return
+	}
+
+	if len(parts) != 3 {
+		fmt.eprintln("request parts must have exactly three parts")
+		return
+	}
+
+	method, path, http_version := parts[0], parts[1], parts[2]
+	fmt.println("route: ", path)
+
+	headers := [dynamic]HttpHeader{}
+	header_loop: for {
+		header, ok := buffered_reader_read_line(&reader)
+		if !ok {
+			fmt.eprintln("error reading header line")
+			return
+		}
+
+		header_string := string(header)
+		if header_string == "" do break
+
+		header_parts, error := strings.split(header_string, ": ")
+		if error != nil {
+			fmt.eprintln("error splitting header", error)
+			return
+		}
+
+		if len(header_parts) != 2 {
+			fmt.eprintln("expected 2 parts to header but found", len(header_parts))
+			return
+		}
+
+		append_elem(&headers, HttpHeader{key = header_parts[0], value = header_parts[1]})
+	}
+
+	response: string
+
+	if path == "/" {
+		// return 200 ok
+		response = "HTTP/1.1 200 OK\r\n\r\n"
+	} else if strings.starts_with(path, "/echo/") {
+		// echo route handler
+		echo_parts, error := strings.split(path, "/echo/")
+		if error != nil {
+			fmt.eprintln("error during request line split", split_error)
+			return
+		}
+
+		string_to_echo := echo_parts[1]
+
+		response = fmt.tprintf(
+			"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
+			len(string_to_echo),
+			string_to_echo,
+		)
+	} else if path == "/user-agent" {
+		// whatever we get in the user agent header, we return
+		index, found := slice.linear_search_proc(headers[:], proc(header: HttpHeader) -> bool {
+				return strings.to_lower(header.key) == "user-agent"
+			})
+
+		if !found {
+			response = "HTTP/1.1 404 Not Found\r\n\r\n"
+		} else {
+			header := headers[index]
+
+			response = fmt.tprintf(
+				"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
+				len(header.value),
+				header.value,
+			)
+		}
+	} else {
+		// return 404 not found
+		response = "HTTP/1.1 404 Not Found\r\n\r\n"
+	}
+
+	posix.write(client_socket, raw_data(transmute([]byte)response), len(response))
 }
