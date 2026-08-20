@@ -103,7 +103,6 @@ main :: proc() {
 			}
 
 			append_elem(&headers, HttpHeader{key = header_parts[0], value = header_parts[1]})
-			fmt.println("successfully added a header")
 		}
 
 		response: string
@@ -129,7 +128,7 @@ main :: proc() {
 		} else if path == "/user-agent" {
 			// whatever we get in the user agent header, we return
 			index, found := slice.linear_search_proc(headers[:], proc(header: HttpHeader) -> bool {
-					return header.key == "User-Agent"
+					return strings.to_lower(header.key) == "user-agent"
 				})
 
 			if !found {
