@@ -90,13 +90,11 @@ main :: proc() {
 
 			string_to_echo := echo_parts[1]
 
-			response := fmt.tprintf(
+			response = fmt.tprintf(
 				"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
 				len(string_to_echo),
 				string_to_echo,
 			)
-
-			fmt.println("just before responding", response)
 		} else {
 			// return 404 not found
 			response = "HTTP/1.1 404 Not Found\r\n\r\n"
