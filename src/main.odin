@@ -2,8 +2,13 @@ package main
 
 import "core:bytes"
 import "core:fmt"
+import "core:slice"
 import "core:strings"
 import "core:sys/posix"
+
+HttpHeader :: struct {
+	key, value: string,
+}
 
 main :: proc() {
 	sock := posix.socket(posix.AF.INET, posix.Sock.STREAM)
@@ -39,7 +44,7 @@ main :: proc() {
 	client_addr: posix.sockaddr_storage
 	client_addr_len := posix.socklen_t(size_of(posix.sockaddr_storage))
 
-	for {
+	outer_loop: for {
 		// repeatedly accept new connections
 		client_socket := posix.accept(sock, cast(^posix.sockaddr)(&client_addr), &client_addr_len)
 		if client_socket < 0 {
@@ -75,6 +80,32 @@ main :: proc() {
 		method, path, http_version := parts[0], parts[1], parts[2]
 		fmt.println("route: ", path)
 
+		headers := [dynamic]HttpHeader{}
+		header_loop: for {
+			header, ok := buffered_reader_read_line(&reader)
+			if !ok {
+				fmt.eprintln("error reading header line")
+				continue outer_loop
+			}
+
+			header_string := string(header)
+			if header_string == "" do break
+
+			header_parts, error := strings.split(header_string, ": ")
+			if error != nil {
+				fmt.eprintln("error splitting header", error)
+				continue outer_loop
+			}
+
+			if len(header_parts) != 2 {
+				fmt.eprintln("expected 2 parts to header but found", len(header_parts))
+				continue outer_loop
+			}
+
+			append_elem(&headers, HttpHeader{key = header_parts[0], value = header_parts[1]})
+			fmt.println("successfully added a header")
+		}
+
 		response: string
 
 		if path == "/" {
@@ -95,6 +126,23 @@ main :: proc() {
 				len(string_to_echo),
 				string_to_echo,
 			)
+		} else if path == "/user-agent" {
+			// whatever we get in the user agent header, we return
+			index, found := slice.linear_search_proc(headers[:], proc(header: HttpHeader) -> bool {
+					return header.key == "User-Agent"
+				})
+
+			if !found {
+				response = "HTTP/1.1 404 Not Found\r\n\r\n"
+			} else {
+				header := headers[index]
+
+				response = fmt.tprintf(
+					"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
+					len(header.value),
+					header.value,
+				)
+			}
 		} else {
 			// return 404 not found
 			response = "HTTP/1.1 404 Not Found\r\n\r\n"
