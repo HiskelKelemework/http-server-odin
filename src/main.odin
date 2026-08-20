@@ -73,7 +73,7 @@ main :: proc() {
 		method, path, http_version := parts[0], parts[1], parts[2]
 		if path == "/" {
 			// return 200 ok
-			response := "HTTP/1.1 200 OK \r\n\r\n"
+			response := "HTTP/1.1 200 OK\r\n\r\n"
 			posix.write(client_socket, raw_data(transmute([]byte)response), len(response))
 		} else {
 			// return 404 not found
