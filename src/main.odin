@@ -46,6 +46,8 @@ main :: proc() {
 			fmt.eprintln("failed to accept a client connection")
 		}
 
+		defer posix.close(client_socket)
+
 		fmt.println("accepted socket")
 		// here, we need to read the request line
 		reader: Buffered_Reader
@@ -71,17 +73,36 @@ main :: proc() {
 		}
 
 		method, path, http_version := parts[0], parts[1], parts[2]
+		fmt.println("route: ", path)
+
+		response: string
+
 		if path == "/" {
 			// return 200 ok
-			response := "HTTP/1.1 200 OK\r\n\r\n"
-			posix.write(client_socket, raw_data(transmute([]byte)response), len(response))
+			response = "HTTP/1.1 200 OK\r\n\r\n"
+		} else if strings.starts_with(path, "/echo/") {
+			// echo route handler
+			echo_parts, error := strings.split(path, "/echo/")
+			if error != nil {
+				fmt.eprintln("error during request line split", split_error)
+				continue
+			}
+
+			string_to_echo := echo_parts[1]
+
+			response := fmt.tprintf(
+				"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
+				len(string_to_echo),
+				string_to_echo,
+			)
+
+			fmt.println("just before responding", response)
 		} else {
 			// return 404 not found
-			response := "HTTP/1.1 404 Not Found\r\n\r\n"
-			posix.write(client_socket, raw_data(transmute([]byte)response), len(response))
+			response = "HTTP/1.1 404 Not Found\r\n\r\n"
 		}
 
-		posix.close(client_socket)
+		posix.write(client_socket, raw_data(transmute([]byte)response), len(response))
 	}
 }
 
