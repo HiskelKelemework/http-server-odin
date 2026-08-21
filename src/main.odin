@@ -263,7 +263,7 @@ request_handler :: proc(data: rawptr) {
 				response = "HTTP/1.1 404 Not Found\r\n\r\n"
 			} else {
 				response = fmt.tprintf(
-					"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
+					"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\n\r\n%s",
 					len(data),
 					data,
 				)
@@ -280,15 +280,9 @@ request_handler :: proc(data: rawptr) {
 handle_read_file :: proc(filename, directory: string) -> (contents: []byte, found: bool) {
 	full_file_name := fmt.tprintf("%s%s", filename, directory)
 
-	cwd, err := os.get_working_directory(context.allocator)
-	if err != nil {
-		fmt.eprintln("failed to get cwd", err)
-		return nil, false
-	}
-
 	joined_path, join_err := filepath.join({directory, filename}, context.allocator)
 	if join_err != nil {
-		fmt.eprintln("join failed", err)
+		fmt.eprintln("join failed", join_err)
 		return nil, false
 	}
 
