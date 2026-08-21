@@ -286,7 +286,7 @@ handle_read_file :: proc(filename, directory: string) -> (contents: []byte, foun
 		return nil, false
 	}
 
-	joined_path, join_err := filepath.join({cwd, directory, filename}, context.allocator)
+	joined_path, join_err := filepath.join({directory, filename}, context.allocator)
 	if join_err != nil {
 		fmt.eprintln("join failed", err)
 		return nil, false
