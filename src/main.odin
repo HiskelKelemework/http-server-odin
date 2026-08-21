@@ -11,6 +11,11 @@ HttpHeader :: struct {
 	key, value: string,
 }
 
+Request :: struct {
+	method, path: string,
+	headers:      [dynamic]HttpHeader,
+}
+
 main :: proc() {
 	sock := posix.socket(posix.AF.INET, posix.Sock.STREAM)
 	if sock < 0 {
@@ -147,10 +152,11 @@ request_handler :: proc(data: rawptr) {
 		return
 	}
 
-	method, path, http_version := parts[0], parts[1], parts[2]
-	fmt.println("route: ", path)
+	request := Request{}
+	request.method = parts[0]
+	request.path = parts[1]
+	request.headers = [dynamic]HttpHeader{}
 
-	headers := [dynamic]HttpHeader{}
 	header_loop: for {
 		header, ok := buffered_reader_read_line(&reader)
 		if !ok {
@@ -172,17 +178,17 @@ request_handler :: proc(data: rawptr) {
 			return
 		}
 
-		append_elem(&headers, HttpHeader{key = header_parts[0], value = header_parts[1]})
+		append_elem(&request.headers, HttpHeader{key = header_parts[0], value = header_parts[1]})
 	}
 
 	response: string
 
-	if path == "/" {
+	if request.path == "/" {
 		// return 200 ok
 		response = "HTTP/1.1 200 OK\r\n\r\n"
-	} else if strings.starts_with(path, "/echo/") {
+	} else if strings.starts_with(request.path, "/echo/") {
 		// echo route handler
-		echo_parts, error := strings.split(path, "/echo/")
+		echo_parts, error := strings.split(request.path, "/echo/")
 		if error != nil {
 			fmt.eprintln("error during request line split", split_error)
 			return
@@ -195,16 +201,19 @@ request_handler :: proc(data: rawptr) {
 			len(string_to_echo),
 			string_to_echo,
 		)
-	} else if path == "/user-agent" {
+	} else if request.path == "/user-agent" {
 		// whatever we get in the user agent header, we return
-		index, found := slice.linear_search_proc(headers[:], proc(header: HttpHeader) -> bool {
+		index, found := slice.linear_search_proc(
+			request.headers[:],
+			proc(header: HttpHeader) -> bool {
 				return strings.to_lower(header.key) == "user-agent"
-			})
+			},
+		)
 
 		if !found {
 			response = "HTTP/1.1 404 Not Found\r\n\r\n"
 		} else {
-			header := headers[index]
+			header := request.headers[index]
 
 			response = fmt.tprintf(
 				"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
