@@ -279,14 +279,7 @@ request_handler :: proc(data: rawptr) {
 
 handle_read_file :: proc(filename, directory: string) -> (contents: []byte, found: bool) {
 	full_file_name := fmt.tprintf("%s%s", filename, directory)
-	absolute_path, os_error := filepath.abs(full_file_name, context.allocator)
-	if os_error != nil {
-		fmt.println("could not get absolute path for ", full_file_name, "error is ", os_error)
-		return nil, false
-	}
-
-	fmt.println("absolute_path", absolute_path)
-	data, error := os.read_entire_file(absolute_path, context.allocator)
+	data, error := os.read_entire_file(full_file_name, context.allocator)
 
 	if error != nil do return nil, false
 	return data, true
