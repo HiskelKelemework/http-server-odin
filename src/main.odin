@@ -279,7 +279,21 @@ request_handler :: proc(data: rawptr) {
 
 handle_read_file :: proc(filename, directory: string) -> (contents: []byte, found: bool) {
 	full_file_name := fmt.tprintf("%s%s", filename, directory)
-	data, error := os.read_entire_file(full_file_name, context.allocator)
+
+	cwd, err := os.get_working_directory(context.allocator)
+	if err != nil {
+		fmt.eprintln("failed to get cwd", err)
+		return nil, false
+	}
+
+	joined_path, join_err := filepath.join({cwd, directory, filename})
+	if join_err != nil {
+		fmt.eprintln("join failed", err)
+		return nil, false
+	}
+
+	fmt.println("full_file_name", joined_path)
+	data, error := os.read_entire_file(joined_path, context.allocator)
 
 	if error != nil do return nil, false
 	return data, true
