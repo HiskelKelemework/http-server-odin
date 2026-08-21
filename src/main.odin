@@ -2,6 +2,8 @@ package main
 
 import "core:bytes"
 import "core:fmt"
+import "core:os"
+import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "core:sys/posix"
@@ -17,6 +19,22 @@ Request :: struct {
 }
 
 main :: proc() {
+	directory := ""
+
+	directory_flag_index, found := slice.linear_search(os.args[:], "--directory")
+	if found {
+		directory_index := directory_flag_index + 1
+		fmt.println("directory indexl", directory_index, "array size", len(os.args))
+
+		has_directory_value := directory_index < len(os.args)
+
+		if has_directory_value {
+			directory = os.args[directory_flag_index + 1]
+			fmt.println("directory changed to ", directory)
+		}
+	}
+
+
 	sock := posix.socket(posix.AF.INET, posix.Sock.STREAM)
 	if sock < 0 {
 		fmt.println("Failed to create server socket")
@@ -57,10 +75,11 @@ main :: proc() {
 			fmt.eprintln("failed to accept a client connection")
 		}
 
-		socket_fd := new(posix.FD)
-		socket_fd^ = client_socket
+		thread_data := new(RequestHandlerData)
+		thread_data.socket_fd = client_socket
+		thread_data.directory = directory
 
-		thread.create_and_start_with_data(socket_fd, request_handler, nil, .Normal, true)
+		thread.create_and_start_with_data(thread_data, request_handler, nil, .Normal, true)
 	}
 }
 
@@ -122,9 +141,17 @@ buffered_reader_read_line :: proc(reader: ^Buffered_Reader) -> (data: []byte, ok
 	return slice_to_return, true
 }
 
+RequestHandlerData :: struct {
+	socket_fd: posix.FD,
+	directory: string,
+}
+
 request_handler :: proc(data: rawptr) {
-	socket_fc := (^posix.FD)(data)
-	client_socket := socket_fc^
+	data := (^RequestHandlerData)(data)
+
+	client_socket := data.socket_fd
+	directory := data.directory
+	fmt.println("in request_handler", client_socket, "directory", directory)
 
 	defer posix.close(client_socket)
 
@@ -221,10 +248,46 @@ request_handler :: proc(data: rawptr) {
 				header.value,
 			)
 		}
+	} else if strings.starts_with(request.path, "/files/") {
+		// we need to get the --directory flag passed
+		request_parts, error := strings.split(request.path, "/files/")
+		if error != nil || len(request_parts) != 2 {
+			fmt.eprintln("could not get filename from path")
+			response = "HTTP/1.1 404 Not Found\r\n\r\n"
+		} else {
+			filename := request_parts[1]
+			data, found := handle_read_file(filename, directory)
+			defer delete(data)
+
+			if !found {
+				response = "HTTP/1.1 404 Not Found\r\n\r\n"
+			} else {
+				response = fmt.tprintf(
+					"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
+					len(data),
+					data,
+				)
+			}
+		}
 	} else {
 		// return 404 not found
 		response = "HTTP/1.1 404 Not Found\r\n\r\n"
 	}
 
 	posix.write(client_socket, raw_data(transmute([]byte)response), len(response))
+}
+
+handle_read_file :: proc(filename, directory: string) -> (contents: []byte, found: bool) {
+	full_file_name := fmt.tprintf("%s%s", filename, directory)
+	absolute_path, os_error := filepath.abs(full_file_name)
+	if os_error != nil {
+		fmt.println("could not get absolute path for ", full_file_name, "error is ", os_error)
+		return nil, false
+	}
+
+	fmt.println("absolute_path", absolute_path)
+	data, error := os.read_entire_file(absolute_path, context.allocator)
+
+	if error != nil do return nil, false
+	return data, true
 }
