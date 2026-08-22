@@ -108,20 +108,20 @@ buffered_reader_read_line :: proc(reader: ^Buffered_Reader) -> (data: []byte, ok
 
 	// until we find a match
 	for index_at < 0 {
-		if cap(reader.data) <= len(data) + int(read_chunk_size) {
+		desired_capacity := reader.tail + int(read_chunk_size)
+
+		if cap(reader.data) <= desired_capacity {
 			// need to resize here
-			resize(&reader.data, len(data) + int(read_chunk_size))
+			error := resize(&reader.data, desired_capacity)
+			if error != nil {
+				fmt.eprintln(#procedure, "resize call failed", error)
+			}
+
 		}
 
 		bytes_read := posix.read(reader.socket, raw_data(reader.data[:]), read_chunk_size)
-		fmt.println("read bytes", bytes_read)
-		if bytes_read < 0 {
-			// reading failed
-			return reader.data[reader.head:reader.tail], false
-		}
-
-		if bytes_read == 0 {
-			// socket closed (gracefully)
+		if bytes_read <= 0 {
+			// reading failed (-1) or connection closed (0)
 			return reader.data[reader.head:reader.tail], false
 		}
 
@@ -150,12 +150,10 @@ request_handler :: proc(data: rawptr) {
 	data := (^RequestHandlerData)(data)
 
 	client_socket := data.socket_fd
-	directory := data.directory
-	fmt.println("in request_handler", client_socket, "directory", directory)
-
 	defer posix.close(client_socket)
 
-	fmt.println("accepted socket")
+	directory := data.directory
+
 	// here, we need to read the request line
 	reader: Buffered_Reader
 	buffered_reader_init(&reader, client_socket)
@@ -169,6 +167,8 @@ request_handler :: proc(data: rawptr) {
 
 	request_line := string(line)
 	parts, split_error := strings.split(request_line, " ")
+	defer delete(parts)
+
 	if split_error != nil {
 		fmt.eprintln("error during request line split", split_error)
 		return
@@ -192,20 +192,24 @@ request_handler :: proc(data: rawptr) {
 		}
 
 		header_string := string(header)
-		if header_string == "" do break
+		if header_string == "" do break header_loop
 
 		header_parts, error := strings.split(header_string, ": ")
+		defer delete(header_parts)
+
 		if error != nil {
 			fmt.eprintln("error splitting header", error)
 			return
 		}
 
-		if len(header_parts) != 2 {
-			fmt.eprintln("expected 2 parts to header but found", len(header_parts))
-			return
+		if len(header_parts) == 2 {
+			new_header := HttpHeader {
+				key   = header_parts[0],
+				value = header_parts[1],
+			}
+			fmt.println("new header", new_header)
+			append_elem(&request.headers, new_header)
 		}
-
-		append_elem(&request.headers, HttpHeader{key = header_parts[0], value = header_parts[1]})
 	}
 
 	response: string
@@ -216,6 +220,8 @@ request_handler :: proc(data: rawptr) {
 	} else if strings.starts_with(request.path, "/echo/") {
 		// echo route handler
 		echo_parts, error := strings.split(request.path, "/echo/")
+		defer delete(echo_parts)
+
 		if error != nil {
 			fmt.eprintln("error during request line split", split_error)
 			return
@@ -251,6 +257,8 @@ request_handler :: proc(data: rawptr) {
 	} else if strings.starts_with(request.path, "/files/") {
 		// we need to get the --directory flag passed
 		request_parts, error := strings.split(request.path, "/files/")
+		defer delete(request_parts)
+
 		if error != nil || len(request_parts) != 2 {
 			fmt.eprintln("could not get filename from path")
 			response = "HTTP/1.1 404 Not Found\r\n\r\n"
@@ -282,11 +290,10 @@ handle_read_file :: proc(filename, directory: string) -> (contents: []byte, foun
 
 	joined_path, join_err := filepath.join({directory, filename}, context.allocator)
 	if join_err != nil {
-		fmt.eprintln("join failed", join_err)
+		fmt.eprintln(#procedure, "join failed", join_err)
 		return nil, false
 	}
 
-	fmt.println("full_file_name", joined_path)
 	data, error := os.read_entire_file(joined_path, context.allocator)
 
 	if error != nil do return nil, false
