@@ -1,6 +1,7 @@
 package main
 
 import "core:bytes"
+import "core:compress/gzip"
 import "core:fmt"
 import "core:odin/parser"
 import "core:os"
@@ -18,6 +19,12 @@ HttpHeader :: struct {
 Request :: struct {
 	method, path: string,
 	headers:      [dynamic]HttpHeader,
+}
+
+Response :: struct {
+	status_code: u16,
+	headers:     [dynamic]HttpHeader,
+	data:        []byte,
 }
 
 main :: proc() {
@@ -190,6 +197,8 @@ request_handler :: proc(data: rawptr) {
 	request.path = parts[1]
 	request.headers = [dynamic]HttpHeader{}
 
+	response := Response{}
+
 	header_loop: for {
 		header, ok := buffered_reader_read_line(&reader)
 		if !ok {
@@ -218,11 +227,9 @@ request_handler :: proc(data: rawptr) {
 		}
 	}
 
-	response: string
-
 	if request.path == "/" {
 		// return 200 ok
-		response = "HTTP/1.1 200 OK\r\n\r\n"
+		response.status_code = 200
 	} else if strings.starts_with(request.path, "/echo/") {
 		// echo route handler
 		echo_parts, error := strings.split(request.path, "/echo/")
@@ -235,10 +242,11 @@ request_handler :: proc(data: rawptr) {
 
 		string_to_echo := echo_parts[1]
 
-		response = fmt.tprintf(
-			"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
-			len(string_to_echo),
-			string_to_echo,
+		response.status_code = 200
+		append_elem(&response.headers, HttpHeader{key = "Content-Type", value = "text/plain"})
+		append_elem(
+			&response.headers,
+			HttpHeader{key = "Content-Length", value = fmt.tprintf("%d", len(string_to_echo))},
 		)
 	} else if request.path == "/user-agent" {
 		// whatever we get in the user agent header, we return
@@ -250,14 +258,15 @@ request_handler :: proc(data: rawptr) {
 		)
 
 		if !found {
-			response = "HTTP/1.1 404 Not Found\r\n\r\n"
+			response.status_code = 404
 		} else {
 			header := request.headers[index]
 
-			response = fmt.tprintf(
-				"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
-				len(header.value),
-				header.value,
+			response.status_code = 200
+			append_elem(&response.headers, HttpHeader{key = "Content-Type", value = "text/plain"})
+			append_elem(
+				&response.headers,
+				HttpHeader{key = "Content-Length", value = fmt.tprintf("%d", len(header.value))},
 			)
 		}
 	} else if request.method == "GET" && strings.starts_with(request.path, "/files/") {
@@ -267,19 +276,23 @@ request_handler :: proc(data: rawptr) {
 
 		if error != nil || len(request_parts) != 2 {
 			fmt.eprintln("could not get filename from path")
-			response = "HTTP/1.1 404 Not Found\r\n\r\n"
+			response.status_code = 404
 		} else {
 			filename := request_parts[1]
 			data, found := handle_read_file(filename, directory)
 			defer delete(data)
 
 			if !found {
-				response = "HTTP/1.1 404 Not Found\r\n\r\n"
+				response.status_code = 404
 			} else {
-				response = fmt.tprintf(
-					"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\n\r\n%s",
-					len(data),
-					data,
+				response.status_code = 200
+				append_elem(
+					&response.headers,
+					HttpHeader{key = "Content-Type", value = "application/octet-stream"},
+				)
+				append_elem(
+					&response.headers,
+					HttpHeader{key = "Content-Length", value = fmt.tprintf("%d", len(data))},
 				)
 			}
 		}
@@ -290,7 +303,7 @@ request_handler :: proc(data: rawptr) {
 
 		if error != nil || len(request_parts) != 2 {
 			fmt.eprintln("could not get filename from path")
-			response = "HTTP/1.1 404 Not Found\r\n\r\n"
+			response.status_code = 404
 		} else {
 			filename := request_parts[1]
 			index, found := slice.linear_search_proc(
@@ -303,30 +316,34 @@ request_handler :: proc(data: rawptr) {
 			if !found {
 				// we didn't find a content length header, without which we can't figure out how many bytes to read from the socket
 				fmt.eprintln("didn't find a content length header")
-				response = "HTTP/1.1 404 Not Found\r\n\r\n"
+				response.status_code = 404
 			} else {
 				contentLengthHeader := request.headers[index]
 				length, ok := strconv.parse_int(contentLengthHeader.value)
 
 				if !ok {
-					response = "HTTP/1.1 404 Not Found\r\n\r\n"
+					response.status_code = 404
 				} else {
 					file_data, ok := handle_read_request_body(&reader, length)
 					fmt.println("file content as string", string(file_data))
 
 					success := handle_write_file(filename, directory, file_data)
-
-					response =
-						success ? "HTTP/1.1 404 Not Found\r\n\r\n" : "HTTP/1.1 201 Created\r\n\r\n"
+					response.status_code = success ? 201 : 404
 				}
 			}
 		}
 	} else {
 		// return 404 not found
-		response = "HTTP/1.1 404 Not Found\r\n\r\n"
+		response.status_code = 404
 	}
 
-	posix.write(client_socket, raw_data(transmute([]byte)response), len(response))
+	response_as_string := format_http_response(response)
+
+	posix.write(
+		client_socket,
+		raw_data(transmute([]byte)response_as_string),
+		len(response_as_string),
+	)
 }
 
 handle_read_file :: proc(filename, directory: string) -> (contents: []byte, found: bool) {
@@ -413,4 +430,37 @@ handle_read_request_body :: proc(
 			return reader.data[old_head:old_head + length], true
 		}
 	}
+}
+
+
+format_http_response :: proc(response: Response) -> string {
+	builder: strings.Builder
+	strings.builder_init(&builder)
+	defer strings.builder_destroy(&builder)
+
+	// response line
+	fmt.sbprintf(&builder, "HTTP/1.1 %s\r\n", status_code_to_string(response.status_code))
+
+	// http headers
+	for header in response.headers {
+		fmt.sbprintf(&builder, "%s: %s\r\n", header.key, header.value)
+	}
+
+	fmt.sbprint(&builder, "\r\n")
+
+	fmt.sbprintf(&builder, string(response.data))
+
+	return strings.to_string(builder)
+}
+
+status_code_to_string :: proc(status_code: u16) -> string {
+	if status_code == 200 {
+		return "200 OK"
+	}
+
+	if status_code == 201 {
+		return "201 Created"
+	}
+
+	return "404 Not Found"
 }
