@@ -2,9 +2,11 @@ package main
 
 import "core:bytes"
 import "core:fmt"
+import "core:odin/parser"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
 import "core:sys/posix"
 import "core:thread"
@@ -119,7 +121,11 @@ buffered_reader_read_line :: proc(reader: ^Buffered_Reader) -> (data: []byte, ok
 			}
 		}
 
-		bytes_read := posix.read(reader.socket, raw_data(reader.data[:]), read_chunk_size)
+		bytes_read := posix.read(
+			reader.socket,
+			raw_data(reader.data[reader.tail:]),
+			read_chunk_size,
+		)
 		if bytes_read <= 0 {
 			// reading failed (-1) or connection closed (0)
 			return reader.data[reader.head:reader.tail], false
@@ -287,20 +293,34 @@ request_handler :: proc(data: rawptr) {
 			response = "HTTP/1.1 404 Not Found\r\n\r\n"
 		} else {
 			filename := request_parts[1]
-			data, found := handle_read_file(filename, directory)
-			defer delete(data)
+			index, found := slice.linear_search_proc(
+				request.headers[:],
+				proc(element: HttpHeader) -> bool {
+					return strings.to_lower(element.key) == "content-length"
+				},
+			)
 
 			if !found {
+				// we didn't find a content length header, without which we can't figure out how many bytes to read from the socket
+				fmt.eprintln("didn't find a content length header")
 				response = "HTTP/1.1 404 Not Found\r\n\r\n"
 			} else {
-				response = fmt.tprintf(
-					"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\n\r\n%s",
-					len(data),
-					data,
-				)
+				contentLengthHeader := request.headers[index]
+				length, ok := strconv.parse_int(contentLengthHeader.value)
+
+				if !ok {
+					response = "HTTP/1.1 404 Not Found\r\n\r\n"
+				} else {
+					file_data, ok := handle_read_request_body(&reader, length)
+					fmt.println("file content as string", string(file_data))
+
+					success := handle_write_file(filename, directory, file_data)
+
+					response =
+						success ? "HTTP/1.1 404 Not Found\r\n\r\n" : "HTTP/1.1 201 Created\r\n\r\n"
+				}
 			}
 		}
-
 	} else {
 		// return 404 not found
 		response = "HTTP/1.1 404 Not Found\r\n\r\n"
@@ -331,4 +351,66 @@ handle_write_file :: proc(filename, directory: string, data: []byte) -> bool {
 
 	error := os.write_entire_file_from_bytes(full_file_name, data)
 	return error != nil
+}
+
+
+handle_read_request_body :: proc(
+	reader: ^Buffered_Reader,
+	length: int,
+) -> (
+	data: []byte,
+	ok: bool,
+) {
+	unused_bytes_from_reader := reader.tail - reader.head
+	fmt.println("expected unused bytes", unused_bytes_from_reader)
+
+	if unused_bytes_from_reader >= length {
+		fmt.println("returning early because we have the bytes")
+
+		old_head := reader.head
+		reader.head += length
+
+		return reader.data[old_head:old_head + length], true
+	}
+
+	read_chunk_size: uint = 4096
+
+	// until we find a match
+	for {
+		desired_capacity := reader.tail + int(read_chunk_size)
+
+		if cap(reader.data) <= desired_capacity {
+			// need to resize here
+			error := resize(&reader.data, desired_capacity)
+			if error != nil {
+				fmt.eprintln(#procedure, "resize call failed", error)
+				return reader.data[reader.head:reader.tail], false
+			}
+		}
+
+		bytes_read := posix.read(
+			reader.socket,
+			raw_data(reader.data[reader.tail:]),
+			read_chunk_size,
+		)
+
+		if bytes_read <= 0 {
+			// reading failed (-1) or connection closed (0)
+			return reader.data[reader.head:reader.tail], false
+		}
+
+		fmt.println("read bytes", bytes_read)
+
+		reader.tail += bytes_read
+		unused_bytes_from_reader := reader.tail - reader.head
+		fmt.println("inside loop unused bytes", unused_bytes_from_reader)
+
+		if unused_bytes_from_reader >= length {
+			fmt.println("about to return")
+			old_head := reader.head
+			reader.head += length
+
+			return reader.data[old_head:old_head + length], true
+		}
+	}
 }
