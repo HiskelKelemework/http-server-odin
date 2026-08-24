@@ -115,8 +115,8 @@ buffered_reader_read_line :: proc(reader: ^Buffered_Reader) -> (data: []byte, ok
 			error := resize(&reader.data, desired_capacity)
 			if error != nil {
 				fmt.eprintln(#procedure, "resize call failed", error)
+				return reader.data[reader.head:reader.tail], false
 			}
-
 		}
 
 		bytes_read := posix.read(reader.socket, raw_data(reader.data[:]), read_chunk_size)
@@ -254,7 +254,7 @@ request_handler :: proc(data: rawptr) {
 				header.value,
 			)
 		}
-	} else if strings.starts_with(request.path, "/files/") {
+	} else if request.method == "GET" && strings.starts_with(request.path, "/files/") {
 		// we need to get the --directory flag passed
 		request_parts, error := strings.split(request.path, "/files/")
 		defer delete(request_parts)
@@ -277,6 +277,30 @@ request_handler :: proc(data: rawptr) {
 				)
 			}
 		}
+	} else if request.method == "POST" && strings.starts_with(request.path, "/files/") {
+		// we need to get the --directory flag passed
+		request_parts, error := strings.split(request.path, "/files/")
+		defer delete(request_parts)
+
+		if error != nil || len(request_parts) != 2 {
+			fmt.eprintln("could not get filename from path")
+			response = "HTTP/1.1 404 Not Found\r\n\r\n"
+		} else {
+			filename := request_parts[1]
+			data, found := handle_read_file(filename, directory)
+			defer delete(data)
+
+			if !found {
+				response = "HTTP/1.1 404 Not Found\r\n\r\n"
+			} else {
+				response = fmt.tprintf(
+					"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\n\r\n%s",
+					len(data),
+					data,
+				)
+			}
+		}
+
 	} else {
 		// return 404 not found
 		response = "HTTP/1.1 404 Not Found\r\n\r\n"
@@ -286,8 +310,6 @@ request_handler :: proc(data: rawptr) {
 }
 
 handle_read_file :: proc(filename, directory: string) -> (contents: []byte, found: bool) {
-	full_file_name := fmt.tprintf("%s%s", filename, directory)
-
 	joined_path, join_err := filepath.join({directory, filename}, context.allocator)
 	if join_err != nil {
 		fmt.eprintln(#procedure, "join failed", join_err)
@@ -298,4 +320,15 @@ handle_read_file :: proc(filename, directory: string) -> (contents: []byte, foun
 
 	if error != nil do return nil, false
 	return data, true
+}
+
+handle_write_file :: proc(filename, directory: string, data: []byte) -> bool {
+	full_file_name, join_error := filepath.join({directory, filename}, context.allocator)
+	if join_error != nil {
+		fmt.eprintln(#procedure, "join failed", join_error)
+		return false
+	}
+
+	error := os.write_entire_file_from_bytes(full_file_name, data)
+	return error != nil
 }
