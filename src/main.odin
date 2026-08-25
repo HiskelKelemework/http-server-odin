@@ -160,211 +160,235 @@ RequestHandlerData :: struct {
 
 request_handler :: proc(data: rawptr) {
 	data := (^RequestHandlerData)(data)
-
 	client_socket := data.socket_fd
-
 	directory := data.directory
 
-	// here, we need to read the request line
 	reader: Buffered_Reader
 	buffered_reader_init(&reader, client_socket)
 	defer buffered_reader_destroy(reader)
 
-	line, ok := buffered_reader_read_line(&reader)
-	if !ok {
-		fmt.eprintln("could not read a full line from buffer")
-		return
-	}
-
-	request_line := string(line)
-	parts, split_error := strings.split(request_line, " ")
-	defer delete(parts)
-
-	if split_error != nil {
-		fmt.eprintln("error during request line split", split_error)
-		return
-	}
-
-	if len(parts) != 3 {
-		fmt.eprintln("request parts must have exactly three parts")
-		return
-	}
-
-	request := Request{}
-	request.method = parts[0]
-	request.path = parts[1]
-	request.headers = [dynamic]HttpHeader{}
-
-	response := Response{}
-	// TODO: init and destroy response helpers
-	response.headers = make([dynamic]HttpHeader)
-
-	header_loop: for {
-		header, ok := buffered_reader_read_line(&reader)
+	for {
+		// here, we need to read the request line
+		line, ok := buffered_reader_read_line(&reader)
 		if !ok {
-			fmt.eprintln("error reading header line")
+			fmt.eprintln("could not read a full line from buffer")
 			return
 		}
 
-		header_string := string(header)
-		if header_string == "" do break header_loop
+		request_line := string(line)
+		parts, split_error := strings.split(request_line, " ")
+		defer delete(parts)
 
-		header_parts, error := strings.split(header_string, ": ")
-		defer delete(header_parts)
-
-		if error != nil {
-			fmt.eprintln("error splitting header", error)
-			return
-		}
-
-		if len(header_parts) == 2 {
-			new_header := HttpHeader {
-				key   = header_parts[0],
-				value = header_parts[1],
-			}
-			fmt.println("new header", new_header)
-			append_elem(&request.headers, new_header)
-		}
-	}
-
-	if request.path == "/" {
-		// return 200 ok
-		response.status_code = 200
-	} else if strings.starts_with(request.path, "/echo/") {
-		// echo route handler
-		echo_parts, error := strings.split(request.path, "/echo/")
-		defer delete(echo_parts)
-
-		if error != nil {
+		if split_error != nil {
 			fmt.eprintln("error during request line split", split_error)
 			return
 		}
 
-		string_to_echo := strings.clone(echo_parts[1])
-
-		response.status_code = 200
-		response.data = transmute([]byte)string_to_echo
-
-		append_elem(&response.headers, HttpHeader{key = "Content-Type", value = "text/plain"})
-	} else if request.path == "/user-agent" {
-		// whatever we get in the user agent header, we return
-		index, found := slice.linear_search_proc(
-			request.headers[:],
-			proc(header: HttpHeader) -> bool {
-				return strings.to_lower(header.key) == "user-agent"
-			},
-		)
-
-		if !found {
-			response.status_code = 404
-		} else {
-			header := request.headers[index]
-
-			response.status_code = 200
-			response.data = transmute([]byte)header.value
-
-			append_elem(&response.headers, HttpHeader{key = "Content-Type", value = "text/plain"})
+		if len(parts) != 3 {
+			fmt.eprintln("request parts must have exactly three parts")
+			return
 		}
-	} else if request.method == "GET" && strings.starts_with(request.path, "/files/") {
-		// we need to get the --directory flag passed
-		request_parts, error := strings.split(request.path, "/files/")
-		defer delete(request_parts)
 
-		if error != nil || len(request_parts) != 2 {
-			fmt.eprintln("could not get filename from path")
-			response.status_code = 404
-		} else {
-			filename := request_parts[1]
-			data, found := handle_read_file(filename, directory)
+		request := Request{}
+		request.method = parts[0]
+		request.path = parts[1]
+		request.headers = [dynamic]HttpHeader{}
 
-			if !found {
-				response.status_code = 404
-			} else {
-				response.status_code = 200
-				response.data = data
+		response := Response{}
+		// TODO: init and destroy response helpers
+		response.headers = make([dynamic]HttpHeader)
 
-				append_elem(
-					&response.headers,
-					HttpHeader{key = "Content-Type", value = "application/octet-stream"},
-				)
+		header_loop: for {
+			header, ok := buffered_reader_read_line(&reader)
+			if !ok {
+				fmt.eprintln("error reading header line")
+				return
+			}
+
+			header_string := string(header)
+			if header_string == "" do break header_loop
+
+			header_parts, error := strings.split(header_string, ": ")
+			defer delete(header_parts)
+
+			if error != nil {
+				fmt.eprintln("error splitting header", error)
+				return
+			}
+
+			if len(header_parts) == 2 {
+				new_header := HttpHeader {
+					key   = header_parts[0],
+					value = header_parts[1],
+				}
+				fmt.println("new header", new_header)
+				append_elem(&request.headers, new_header)
 			}
 		}
-	} else if request.method == "POST" && strings.starts_with(request.path, "/files/") {
-		// we need to get the --directory flag passed
-		request_parts, error := strings.split(request.path, "/files/")
-		defer delete(request_parts)
 
-		if error != nil || len(request_parts) != 2 {
-			fmt.eprintln("could not get filename from path")
-			response.status_code = 404
-		} else {
-			filename := request_parts[1]
+		if request.path == "/" {
+			// return 200 ok
+			response.status_code = 200
+		} else if strings.starts_with(request.path, "/echo/") {
+			// echo route handler
+			echo_parts, error := strings.split(request.path, "/echo/")
+			defer delete(echo_parts)
+
+			if error != nil {
+				fmt.eprintln("error during request line split", split_error)
+				return
+			}
+
+			string_to_echo := strings.clone(echo_parts[1])
+
+			response.status_code = 200
+			response.data = transmute([]byte)string_to_echo
+
+			append_elem(&response.headers, HttpHeader{key = "Content-Type", value = "text/plain"})
+		} else if request.path == "/user-agent" {
+			// whatever we get in the user agent header, we return
 			index, found := slice.linear_search_proc(
 				request.headers[:],
-				proc(element: HttpHeader) -> bool {
-					return strings.to_lower(element.key) == "content-length"
+				proc(header: HttpHeader) -> bool {
+					return strings.to_lower(header.key) == "user-agent"
 				},
 			)
 
 			if !found {
-				// we didn't find a content length header, without which we can't figure out how many bytes to read from the socket
-				fmt.eprintln("didn't find a content length header")
 				response.status_code = 404
 			} else {
-				contentLengthHeader := request.headers[index]
-				length, ok := strconv.parse_int(contentLengthHeader.value)
+				header := request.headers[index]
 
-				if !ok {
+				response.status_code = 200
+				response.data = transmute([]byte)header.value
+
+				append_elem(
+					&response.headers,
+					HttpHeader{key = "Content-Type", value = "text/plain"},
+				)
+			}
+		} else if request.method == "GET" && strings.starts_with(request.path, "/files/") {
+			// we need to get the --directory flag passed
+			request_parts, error := strings.split(request.path, "/files/")
+			defer delete(request_parts)
+
+			if error != nil || len(request_parts) != 2 {
+				fmt.eprintln("could not get filename from path")
+				response.status_code = 404
+			} else {
+				filename := request_parts[1]
+				data, found := handle_read_file(filename, directory)
+
+				if !found {
 					response.status_code = 404
 				} else {
-					file_data, ok := handle_read_request_body(&reader, length)
-					success := handle_write_file(filename, directory, file_data)
-					response.status_code = success ? 201 : 404
+					response.status_code = 200
+					response.data = data
+
+					append_elem(
+						&response.headers,
+						HttpHeader{key = "Content-Type", value = "application/octet-stream"},
+					)
+				}
+			}
+		} else if request.method == "POST" && strings.starts_with(request.path, "/files/") {
+			// we need to get the --directory flag passed
+			request_parts, error := strings.split(request.path, "/files/")
+			defer delete(request_parts)
+
+			if error != nil || len(request_parts) != 2 {
+				fmt.eprintln("could not get filename from path")
+				response.status_code = 404
+			} else {
+				filename := request_parts[1]
+				index, found := slice.linear_search_proc(
+					request.headers[:],
+					proc(element: HttpHeader) -> bool {
+						return strings.to_lower(element.key) == "content-length"
+					},
+				)
+
+				if !found {
+					// we didn't find a content length header, without which we can't figure out how many bytes to read from the socket
+					fmt.eprintln("didn't find a content length header")
+					response.status_code = 404
+				} else {
+					contentLengthHeader := request.headers[index]
+					length, ok := strconv.parse_int(contentLengthHeader.value)
+
+					if !ok {
+						response.status_code = 404
+					} else {
+						file_data, ok := handle_read_request_body(&reader, length)
+						success := handle_write_file(filename, directory, file_data)
+						response.status_code = success ? 201 : 404
+					}
+				}
+			}
+		} else {
+			// return 404 not found
+			response.status_code = 404
+		}
+
+		accept_encoding_index, found := slice.linear_search_proc(
+			request.headers[:],
+			proc(header: HttpHeader) -> bool {
+				return strings.to_lower(header.key) == "accept-encoding"
+			},
+		)
+
+		if found {
+			accept_encoding_header := request.headers[accept_encoding_index]
+			if strings.contains(accept_encoding_header.value, "gzip") {
+				output, ok := gzip_compress(response.data)
+				if ok {
+					if response.data != nil {
+						delete(response.data)
+					}
+
+					response.data = output
+					append_elem(&response.headers, HttpHeader{"Content-Encoding", "gzip"})
 				}
 			}
 		}
-	} else {
-		// return 404 not found
-		response.status_code = 404
-	}
 
-	accept_encoding_index, found := slice.linear_search_proc(
-		request.headers[:],
-		proc(header: HttpHeader) -> bool {
-			return strings.to_lower(header.key) == "accept-encoding"
-		},
-	)
+		append_elem(
+			&response.headers,
+			HttpHeader{key = "Content-Length", value = fmt.tprintf("%d", len(response.data))},
+		)
 
-	if found {
-		accept_encoding_header := request.headers[accept_encoding_index]
-		if strings.contains(accept_encoding_header.value, "gzip") {
-			output, ok := gzip_compress(response.data)
-			if ok {
-				if response.data != nil {
-					delete(response.data)
-				}
+		connection_header_index, header_found := slice.linear_search_proc(
+			request.headers[:],
+			proc(header: HttpHeader) -> bool {
+				return strings.to_lower(header.key) == "connection"
+			},
+		)
 
-				response.data = output
-				append_elem(&response.headers, HttpHeader{"Content-Encoding", "gzip"})
+		should_close_connection := false
+
+		if header_found {
+			header := request.headers[connection_header_index]
+			fmt.println("connection header value", header.value)
+
+			if header.value == "close" {
+				append_elem(&response.headers, HttpHeader{"Connection", "close"})
+				should_close_connection = true
 			}
 		}
+
+		response_as_string := format_http_response(response)
+		fmt.println("response as string", response_as_string)
+
+		posix.write(
+			client_socket,
+			raw_data(transmute([]byte)response_as_string),
+			len(response_as_string),
+		)
+
+		if should_close_connection {
+			posix.close(client_socket)
+		}
 	}
-
-	append_elem(
-		&response.headers,
-		HttpHeader{key = "Content-Length", value = fmt.tprintf("%d", len(response.data))},
-	)
-
-	response_as_string := format_http_response(response)
-	fmt.println("response as string", response_as_string)
-
-	posix.write(
-		client_socket,
-		raw_data(transmute([]byte)response_as_string),
-		len(response_as_string),
-	)
-
-	posix.close(client_socket)
 }
 
 handle_read_file :: proc(filename, directory: string) -> (contents: []byte, found: bool) {
