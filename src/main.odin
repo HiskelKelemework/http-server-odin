@@ -345,7 +345,7 @@ request_handler :: proc(data: rawptr) {
 			// 	}
 			//
 			// 	response.data = output
-			append_elem(&response.headers, HttpHeader{"Content-Endcoding", "gzip"})
+			append_elem(&response.headers, HttpHeader{"Content-Encoding", "gzip"})
 		}
 	}
 
