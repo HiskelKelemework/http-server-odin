@@ -338,14 +338,15 @@ request_handler :: proc(data: rawptr) {
 	if found {
 		accept_encoding_header := request.headers[accept_encoding_index]
 		if strings.contains(accept_encoding_header.value, "gzip") {
-			// output, ok := compress.gzip_compress(response.data)
-			// if ok {
-			// 	if response.data != nil {
-			// 		delete(response.data)
-			// 	}
-			//
-			// 	response.data = output
-			append_elem(&response.headers, HttpHeader{"Content-Encoding", "gzip"})
+			output, ok := compress.gzip_compress(response.data)
+			if ok {
+				if response.data != nil {
+					delete(response.data)
+				}
+
+				response.data = output
+				append_elem(&response.headers, HttpHeader{"Content-Encoding", "gzip"})
+			}
 		}
 	}
 
