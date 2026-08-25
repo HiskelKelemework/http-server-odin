@@ -1,9 +1,8 @@
 package main
 
+import "compress"
 import "core:bytes"
-import "core:compress/gzip"
 import "core:fmt"
-import "core:odin/parser"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
@@ -163,7 +162,6 @@ request_handler :: proc(data: rawptr) {
 	data := (^RequestHandlerData)(data)
 
 	client_socket := data.socket_fd
-	defer posix.close(client_socket)
 
 	directory := data.directory
 
@@ -198,6 +196,8 @@ request_handler :: proc(data: rawptr) {
 	request.headers = [dynamic]HttpHeader{}
 
 	response := Response{}
+	// TODO: init and destroy response helpers
+	response.headers = make([dynamic]HttpHeader)
 
 	header_loop: for {
 		header, ok := buffered_reader_read_line(&reader)
@@ -240,14 +240,12 @@ request_handler :: proc(data: rawptr) {
 			return
 		}
 
-		string_to_echo := echo_parts[1]
+		string_to_echo := strings.clone(echo_parts[1])
 
 		response.status_code = 200
+		response.data = transmute([]byte)string_to_echo
+
 		append_elem(&response.headers, HttpHeader{key = "Content-Type", value = "text/plain"})
-		append_elem(
-			&response.headers,
-			HttpHeader{key = "Content-Length", value = fmt.tprintf("%d", len(string_to_echo))},
-		)
 	} else if request.path == "/user-agent" {
 		// whatever we get in the user agent header, we return
 		index, found := slice.linear_search_proc(
@@ -263,11 +261,9 @@ request_handler :: proc(data: rawptr) {
 			header := request.headers[index]
 
 			response.status_code = 200
+			response.data = transmute([]byte)header.value
+
 			append_elem(&response.headers, HttpHeader{key = "Content-Type", value = "text/plain"})
-			append_elem(
-				&response.headers,
-				HttpHeader{key = "Content-Length", value = fmt.tprintf("%d", len(header.value))},
-			)
 		}
 	} else if request.method == "GET" && strings.starts_with(request.path, "/files/") {
 		// we need to get the --directory flag passed
@@ -280,19 +276,16 @@ request_handler :: proc(data: rawptr) {
 		} else {
 			filename := request_parts[1]
 			data, found := handle_read_file(filename, directory)
-			defer delete(data)
 
 			if !found {
 				response.status_code = 404
 			} else {
 				response.status_code = 200
+				response.data = data
+
 				append_elem(
 					&response.headers,
 					HttpHeader{key = "Content-Type", value = "application/octet-stream"},
-				)
-				append_elem(
-					&response.headers,
-					HttpHeader{key = "Content-Length", value = fmt.tprintf("%d", len(data))},
 				)
 			}
 		}
@@ -325,8 +318,6 @@ request_handler :: proc(data: rawptr) {
 					response.status_code = 404
 				} else {
 					file_data, ok := handle_read_request_body(&reader, length)
-					fmt.println("file content as string", string(file_data))
-
 					success := handle_write_file(filename, directory, file_data)
 					response.status_code = success ? 201 : 404
 				}
@@ -337,13 +328,42 @@ request_handler :: proc(data: rawptr) {
 		response.status_code = 404
 	}
 
+	accept_encoding_index, found := slice.linear_search_proc(
+		request.headers[:],
+		proc(header: HttpHeader) -> bool {
+			return strings.to_lower(header.key) == "accept-encoding"
+		},
+	)
+
+	if found {
+		accept_encoding_header := request.headers[accept_encoding_index]
+		if strings.contains(accept_encoding_header.value, "gzip") {
+			// output, ok := compress.gzip_compress(response.data)
+			// if ok {
+			// 	if response.data != nil {
+			// 		delete(response.data)
+			// 	}
+			//
+			// 	response.data = output
+			append_elem(&response.headers, HttpHeader{"Content-Endcoding", "gzip"})
+		}
+	}
+
+	append_elem(
+		&response.headers,
+		HttpHeader{key = "Content-Length", value = fmt.tprintf("%d", len(response.data))},
+	)
+
 	response_as_string := format_http_response(response)
+	fmt.println("response as string", response_as_string)
 
 	posix.write(
 		client_socket,
 		raw_data(transmute([]byte)response_as_string),
 		len(response_as_string),
 	)
+
+	posix.close(client_socket)
 }
 
 handle_read_file :: proc(filename, directory: string) -> (contents: []byte, found: bool) {
@@ -367,9 +387,13 @@ handle_write_file :: proc(filename, directory: string, data: []byte) -> bool {
 	}
 
 	error := os.write_entire_file_from_bytes(full_file_name, data)
-	return error != nil
-}
+	if error != nil {
+		fmt.println(#procedure, "error during file write", error)
+		return false
+	}
 
+	return true
+}
 
 handle_read_request_body :: proc(
 	reader: ^Buffered_Reader,
@@ -432,11 +456,9 @@ handle_read_request_body :: proc(
 	}
 }
 
-
 format_http_response :: proc(response: Response) -> string {
 	builder: strings.Builder
 	strings.builder_init(&builder)
-	defer strings.builder_destroy(&builder)
 
 	// response line
 	fmt.sbprintf(&builder, "HTTP/1.1 %s\r\n", status_code_to_string(response.status_code))
