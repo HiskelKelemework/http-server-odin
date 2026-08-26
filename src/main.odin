@@ -4,7 +4,6 @@ import api "./api"
 import router "./router"
 import "./server"
 
-import "core:fmt"
 import "core:os"
 import "core:slice"
 
@@ -30,16 +29,12 @@ main :: proc() {
 
 parse_directory_flag :: proc() -> Maybe(string) {
 	directory_flag_index, found := slice.linear_search(os.args[:], "--directory")
-	if found {
-		directory_index := directory_flag_index + 1
-		fmt.println("directory indexl", directory_index, "array size", len(os.args))
+	if !found do return nil
 
-		has_directory_value := directory_index < len(os.args)
+	directory_value_index := directory_flag_index + 1
 
-		if has_directory_value {
-			return os.args[directory_flag_index + 1]
-		}
-	}
+	has_directory_value := directory_value_index < len(os.args)
+	if !has_directory_value do return nil
 
-	return nil
+	return os.args[directory_value_index]
 }
