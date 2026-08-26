@@ -5,23 +5,11 @@ import router "../router"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
-import "core:strings"
 
 handle_read_file :: proc(request: ^r.Request, response: ^r.Response, ctx: router.RouterContext) {
-	fmt.println("request params", request.path_params)
 	directory := ctx["directory"].(string) or_else ""
 
-	// we need to get the --directory flag passed
-	request_parts, error := strings.split(request.path, "/files/")
-	defer delete(request_parts)
-
-	if error != nil || len(request_parts) != 2 {
-		fmt.eprintln("could not get filename from path")
-		response.status_code = 404
-		return
-	}
-
-	filename := request_parts[1]
+	filename := request.path_params["filename"]
 	data, found := read_file(filename, directory)
 
 	if !found {

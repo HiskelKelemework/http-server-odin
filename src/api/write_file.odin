@@ -7,20 +7,9 @@ import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:strconv"
-import "core:strings"
 
 handle_write_file :: proc(request: ^r.Request, response: ^r.Response, ctx: router.RouterContext) {
-	// we need to get the --directory flag passed
-	request_parts, error := strings.split(request.path, "/files/")
-	defer delete(request_parts)
-
-	if error != nil || len(request_parts) != 2 {
-		fmt.eprintln("could not get filename from path")
-		response.status_code = 404
-		return
-	}
-
-	filename := request_parts[1]
+	filename := request.path_params["filename"]
 
 	content_length_header, ok := request_utils.find_header(request.headers[:], "content-length").?
 	if !ok {

@@ -193,8 +193,6 @@ parse_request_and_handle :: proc(data: rawptr) {
 
 		connection_header := request_utils.find_header(request.headers[:], "connection")
 		if header, ok := connection_header.?; ok {
-			fmt.println("connection header value", header.value)
-
 			if header.value == "close" {
 				append_elem(&response.headers, r.HttpHeader{"Connection", "close"})
 				should_close_connection = true
@@ -215,6 +213,7 @@ parse_request_and_handle :: proc(data: rawptr) {
 
 		if should_close_connection {
 			posix.close(client_socket)
+			break
 		}
 	}
 }

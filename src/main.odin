@@ -19,6 +19,7 @@ main :: proc() {
 		http_router.ctx["directory"] = dir
 	}
 
+	router.router_add_route(&http_router, "GET", "/", api.handle_root)
 	router.router_add_route(&http_router, "GET", "/echo/:this", api.handle_echo)
 	router.router_add_route(&http_router, "GET", "/user-agent", api.handle_user_agent)
 	router.router_add_route(&http_router, "GET", "/files/:filename", api.handle_read_file)
