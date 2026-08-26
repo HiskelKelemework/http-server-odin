@@ -102,7 +102,9 @@ parse_request_and_handle :: proc(data: rawptr) {
 
 		request_line := string(line)
 
-		parts, split_error := strings.split(request_line, " ", context.temp_allocator)
+		parts, split_error := strings.split(request_line, " ")
+		defer if split_error == nil do delete(parts)
+
 		if split_error != nil {
 			fmt.eprintln("error during request line split", split_error)
 			return
@@ -143,7 +145,9 @@ parse_request_and_handle :: proc(data: rawptr) {
 			header_string := string(header)
 			if header_string == "" do break header_loop
 
-			header_parts, error := strings.split(header_string, ": ", context.temp_allocator)
+			header_parts, error := strings.split(header_string, ": ")
+			defer if error == nil do delete(header_parts)
+
 			if error != nil {
 				fmt.eprintln("error splitting header", error)
 				return
