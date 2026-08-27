@@ -25,7 +25,7 @@ extract_path_and_query_params :: proc(
 		return "", {}, "Split Failed"
 	}
 
-	path = path_parts[0]
+	path = strings.clone(path_parts[0])
 	query_params = make(map[string]string)
 
 	if len(path_parts) == 1 do return
@@ -45,12 +45,15 @@ extract_path_and_query_params :: proc(
 		key_value, split_error := strings.split(part, "=", context.temp_allocator)
 		if split_error != nil do continue
 
+		key := strings.clone(key_value[0])
+
 		if len(key_value) == 1 {
-			query_params[key_value[0]] = ""
+			query_params[key] = ""
 			continue
 		}
 
-		query_params[key_value[0]] = key_value[1]
+		value := strings.clone(key_value[1])
+		query_params[key] = value
 	}
 
 	// clean up all the temporary data we created

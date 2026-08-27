@@ -83,21 +83,22 @@ init_http_server :: proc(options: ServerSetupOptions) -> (error: Maybe(CreateSer
 
 parse_request_and_handle :: proc(data: rawptr) {
 	data := (^RequestHandlerData)(data)
+	defer free(data)
 
 	client_socket := data.socket_fd
 	http_router := data.http_router
-	defer free(data)
+
+	defer posix.close(client_socket)
 
 	reader: br.Buffered_Reader
 	br.buffered_reader_init(&reader, client_socket)
 	defer br.buffered_reader_destroy(reader)
 
-	for {
+	handle_request_loop: for {
 		// here, we need to read the request line
 		line, ok := br.buffered_reader_read_line(&reader)
 		if !ok {
-			fmt.eprintln("could not read a full line from buffer")
-			return
+			break
 		}
 
 		request_line := string(line)
@@ -107,12 +108,12 @@ parse_request_and_handle :: proc(data: rawptr) {
 
 		if split_error != nil {
 			fmt.eprintln("error during request line split", split_error)
-			return
+			break
 		}
 
 		if len(parts) != 3 {
 			fmt.eprintln("request parts must have exactly three parts")
-			return
+			break
 		}
 
 		request: r.Request
@@ -124,10 +125,10 @@ parse_request_and_handle :: proc(data: rawptr) {
 		)
 		if path_parsing_error != nil {
 			fmt.eprintln("path parsing failed", path_parsing_error)
-			return
+			break
 		}
 
-		request.method = parts[0]
+		request.method = strings.clone(parts[0])
 		request.path = path
 		request.query_params = query_params
 
@@ -139,7 +140,7 @@ parse_request_and_handle :: proc(data: rawptr) {
 			header, ok := br.buffered_reader_read_line(&reader)
 			if !ok {
 				fmt.eprintln("error reading header line")
-				return
+				break handle_request_loop
 			}
 
 			header_string := string(header)
@@ -150,7 +151,7 @@ parse_request_and_handle :: proc(data: rawptr) {
 
 			if error != nil {
 				fmt.eprintln("error splitting header", error)
-				return
+				continue header_loop
 			}
 
 			if len(header_parts) == 2 {
@@ -162,6 +163,7 @@ parse_request_and_handle :: proc(data: rawptr) {
 				append_elem(&request.headers, new_header)
 			}
 		}
+
 
 		// pull request body only if content-length header is defined
 		content_length_header := request_utils.find_header(request.headers[:], "content-length")
@@ -216,8 +218,7 @@ parse_request_and_handle :: proc(data: rawptr) {
 		)
 
 		if should_close_connection {
-			posix.close(client_socket)
-			break
+			break handle_request_loop
 		}
 	}
 }
@@ -296,11 +297,8 @@ handle_read_request_body :: proc(
 			return reader.data[reader.head:reader.tail], false
 		}
 
-		fmt.println("read bytes", bytes_read)
-
 		reader.tail += bytes_read
 		unused_bytes_from_reader := reader.tail - reader.head
-		fmt.println("inside loop unused bytes", unused_bytes_from_reader)
 
 		if unused_bytes_from_reader >= length {
 			fmt.println("about to return")

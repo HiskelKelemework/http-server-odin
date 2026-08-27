@@ -1,7 +1,6 @@
 package router
 
 import r "../request"
-import "core:fmt"
 import "core:slice"
 import "core:strings"
 
@@ -61,8 +60,6 @@ router_add_route :: proc(
 }
 
 router_handle_request :: proc(router: Router, request: ^r.Request, response: ^r.Response) {
-	fmt.println(#procedure, "handling request, path:", request.path)
-
 	for handler in router.handlers {
 		if request.method != handler.method do continue
 
